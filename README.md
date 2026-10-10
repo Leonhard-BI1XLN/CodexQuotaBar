@@ -26,6 +26,7 @@ Week: xx%
 1. 从[最新 Release](https://github.com/Leonhard-BI1XLN/CodexQuotaBar/releases/latest) 下载 `CodexQuotaBar.exe`。
 2. 双击运行。无需在本工具中再次登录。
 3. 右键标签可刷新额度、打开 ChatGPT、锁定位置或退出；未锁定时可拖动标签调整位置。
+4. 在 MyDockFinder 顶栏内按住 `Ctrl+Shift` 滚动鼠标滚轮，可将滚轮转为横向滚动。
 
 ### 要求与工作方式
 
@@ -53,6 +54,7 @@ A small Windows companion utility for MyDockFinder users. It displays your remai
 1. Download `CodexQuotaBar.exe` from the [latest Release](https://github.com/Leonhard-BI1XLN/CodexQuotaBar/releases/latest).
 2. Run it. No separate sign-in is required.
 3. Right-click the label to refresh quota, open ChatGPT, lock its position, or exit. Drag the label while unlocked to reposition it.
+4. Hold `Ctrl+Shift` while scrolling anywhere over the MyDockFinder bar to send a horizontal scroll.
 
 ### Requirements and behavior
 
@@ -80,6 +82,7 @@ MyDockFinder ユーザー向けの小さな Windows 用ツールです。MyDockF
 1. [最新の Release](https://github.com/Leonhard-BI1XLN/CodexQuotaBar/releases/latest) から `CodexQuotaBar.exe` をダウンロードします。
 2. 起動します。このツールで別途ログインする必要はありません。
 3. ラベルを右クリックすると、使用量の更新、ChatGPT を開く、位置の固定、終了ができます。ロックを解除した状態でドラッグすると位置を変更できます。
+4. MyDockFinder のバー上で `Ctrl+Shift` を押しながらホイールを回すと、横スクロールとして送信します。
 
 ### 必要環境と動作
 
@@ -107,6 +110,7 @@ MyDockFinder 사용자를 위한 작은 Windows 도구입니다. MyDockFinder �
 1. [최신 Release](https://github.com/Leonhard-BI1XLN/CodexQuotaBar/releases/latest)에서 `CodexQuotaBar.exe`를 다운로드합니다.
 2. 실행합니다. 이 도구에서 별도로 로그인할 필요가 없습니다.
 3. 라벨을 마우스 오른쪽 버튼으로 클릭하면 사용량 새로고침, ChatGPT 열기, 위치 잠금 또는 종료를 할 수 있습니다. 잠금 해제 상태에서 라벨을 드래그해 위치를 바꿀 수 있습니다.
+4. MyDockFinder 바 위에서 `Ctrl+Shift`를 누른 채 휠을 돌리면 가로 스크롤로 전송합니다.
 
 ### 요구 사항 및 동작 방식
 

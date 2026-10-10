@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 APP_NAME = "CodexQuotaBar"
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.10.0"
 BAR_CLASS = "MyFinderApp"
 POLL_SECONDS = 60
 WIDGET_WIDTH = 94
@@ -90,6 +90,16 @@ def _register_surface_class(user32, kernel32) -> None:
 
 class _Point(ctypes.Structure):
     _fields_ = [("x", ctypes.wintypes.LONG), ("y", ctypes.wintypes.LONG)]
+
+
+class _MouseLlHookData(ctypes.Structure):
+    _fields_ = [
+        ("pt", _Point),
+        ("mouseData", ctypes.wintypes.DWORD),
+        ("flags", ctypes.wintypes.DWORD),
+        ("time", ctypes.wintypes.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
 
 
 class _Size(ctypes.Structure):
@@ -671,6 +681,8 @@ class QuotaBar:
         self.root.overrideredirect(True)
         self.root.geometry(f"{WIDGET_WIDTH}x{WIDGET_HEIGHT}+0+0")
         self.layered = LayeredSurface(self.root)
+        self.mouse_hook = None
+        self.mouse_hook_callback = None
         self.text_rgb = (255, 255, 255)
         self.target_text_rgb = self.text_rgb
         self.has_color_sampled = False
@@ -703,6 +715,10 @@ class QuotaBar:
 
         self.context = Menu(self.root, tearoff=False)
         self.context.add_command(label="状态：等待同步", state="disabled")
+        self.context.add_command(
+            label="Ctrl + Shift + 滚轮：横向滚动 MyDockFinder 顶栏",
+            state="disabled",
+        )
         self.context.add_separator()
         self.context.add_command(label="立即刷新", command=self._request_refresh)
         self.context.add_command(
@@ -727,6 +743,97 @@ class QuotaBar:
         self.root.after(250, self._process_messages)
         self.root.after(50, self._poll_text_color)
         self.root.after(500, self._follow_bar)
+        self._install_mouse_wheel_hook()
+
+    def _install_mouse_wheel_hook(self) -> None:
+        """Translate Ctrl+Shift+wheel into horizontal scrolling over MyDockFinder."""
+        if os.name != "nt":
+            return
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        hook_proc_type = ctypes.WINFUNCTYPE(
+            ctypes.c_ssize_t,
+            ctypes.c_int,
+            ctypes.wintypes.WPARAM,
+            ctypes.wintypes.LPARAM,
+        )
+        user32.SetWindowsHookExW.argtypes = [
+            ctypes.c_int,
+            hook_proc_type,
+            ctypes.c_void_p,
+            ctypes.wintypes.DWORD,
+        ]
+        user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        user32.CallNextHookEx.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.wintypes.WPARAM,
+            ctypes.wintypes.LPARAM,
+        ]
+        user32.CallNextHookEx.restype = ctypes.c_ssize_t
+        user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+        user32.GetAsyncKeyState.restype = ctypes.c_short
+        user32.IsWindow.argtypes = [ctypes.wintypes.HWND]
+        user32.IsWindow.restype = ctypes.wintypes.BOOL
+        user32.PostMessageW.argtypes = [
+            ctypes.wintypes.HWND,
+            ctypes.wintypes.UINT,
+            ctypes.wintypes.WPARAM,
+            ctypes.wintypes.LPARAM,
+        ]
+        user32.PostMessageW.restype = ctypes.wintypes.BOOL
+
+        def hook_proc(code, message, data_pointer):
+            if code >= 0 and message == 0x020A:  # WM_MOUSEWHEEL
+                try:
+                    data = ctypes.cast(
+                        data_pointer, ctypes.POINTER(_MouseLlHookData)
+                    ).contents
+                    if self._forward_horizontal_wheel(user32, data):
+                        return 1  # Consume the vertical wheel event.
+                except Exception as exc:
+                    log_message(f"Horizontal wheel translation failed: {exc!r}")
+            return user32.CallNextHookEx(
+                self.mouse_hook, code, message, data_pointer
+            )
+
+        self.mouse_hook_callback = hook_proc_type(hook_proc)
+        module = self.layered.kernel32.GetModuleHandleW(None)
+        self.mouse_hook = user32.SetWindowsHookExW(
+            14, self.mouse_hook_callback, module, 0  # WH_MOUSE_LL
+        )
+        if not self.mouse_hook:
+            self.mouse_hook_callback = None
+            log_message(
+                f"Could not install mouse wheel hook: {ctypes.WinError(ctypes.get_last_error())!r}"
+            )
+
+    def _forward_horizontal_wheel(self, user32, data: _MouseLlHookData) -> bool:
+        if not user32.GetAsyncKeyState(0x11) & 0x8000:  # VK_CONTROL
+            return False
+        if not user32.GetAsyncKeyState(0x10) & 0x8000:  # VK_SHIFT
+            return False
+
+        bar = self.confirmed_bar
+        if bar is None:
+            return False
+        parent_hwnd, left, top, width, height = bar
+        x, y = data.pt.x, data.pt.y
+        if not (left <= x < left + width and top <= y < top + height):
+            return False
+        if not user32.IsWindow(parent_hwnd):
+            return False
+
+        delta = ctypes.c_short((data.mouseData >> 16) & 0xFFFF).value
+        if not delta:
+            return False
+        horizontal_wheel = 0x020E  # WM_MOUSEHWHEEL
+        key_state = 0x0004 | 0x0008  # MK_SHIFT | MK_CONTROL
+        wparam = ((delta & 0xFFFF) << 16) | key_state
+        lparam = ctypes.c_ssize_t(((y & 0xFFFF) << 16) | (x & 0xFFFF)).value
+        return bool(
+            user32.PostMessageW(parent_hwnd, horizontal_wheel, wparam, lparam)
+        )
 
     def _update_text_color(self) -> bool:
         """Choose readable text from the MyDockFinder pixels behind this transparent window."""
@@ -1051,6 +1158,13 @@ class QuotaBar:
     def close(self) -> None:
         global _ACTIVE_BAR
         self.stop_event.set()
+        if self.mouse_hook:
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.UnhookWindowsHookEx.argtypes = [ctypes.c_void_p]
+            user32.UnhookWindowsHookEx.restype = ctypes.wintypes.BOOL
+            user32.UnhookWindowsHookEx(self.mouse_hook)
+            self.mouse_hook = None
+            self.mouse_hook_callback = None
         self.layered.close()
         _ACTIVE_BAR = None
         self.root.destroy()
