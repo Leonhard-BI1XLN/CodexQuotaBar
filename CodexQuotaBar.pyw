@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 APP_NAME = "CodexQuotaBar"
-APP_VERSION = "1.10.2"
+APP_VERSION = "1.10.3"
 BAR_CLASS = "MyFinderApp"
 POLL_SECONDS = 60
 WIDGET_WIDTH = 94
@@ -326,18 +326,33 @@ class LayeredSurface:
         self.host_origin = (host_left, host_top)
         self.screen_origin = new_screen_origin
         if position_changed:
-            ok = self.user32.SetWindowPos(
-                self.hwnd,
-                ctypes.wintypes.HWND(-1),  # HWND_TOPMOST
-                *self.screen_origin,
-                self.width,
-                self.height,
-                0x0010 | 0x0200 | 0x0400,  # NOACTIVATE | NOOWNERZORDER | NOSENDCHANGING
-            )
-            if not ok:
-                raise ctypes.WinError(ctypes.get_last_error())
+            self._ensure_topmost(move_window=True)
+        elif self.window_shown:
+            # MyDockFinder can raise its bar over this overlay after a click.
+            # Reassert z-order without moving the window so it stays visible.
+            self._ensure_topmost(move_window=False)
         if self.last_pixels is not None:
             self._update_pixels(self.last_pixels)
+
+    def _ensure_topmost(self, move_window: bool) -> None:
+        flags = 0x0010 | 0x0200 | 0x0400  # NOACTIVATE | NOOWNERZORDER | NOSENDCHANGING
+        if move_window:
+            x, y = self.screen_origin
+            width, height = self.width, self.height
+        else:
+            x = y = width = height = 0
+            flags |= 0x0001 | 0x0002  # NOSIZE | NOMOVE
+        ok = self.user32.SetWindowPos(
+            self.hwnd,
+            ctypes.wintypes.HWND(-1),  # HWND_TOPMOST
+            x,
+            y,
+            width,
+            height,
+            flags,
+        )
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
 
     def update(self, bgra_premultiplied: bytes | bytearray) -> None:
         self.last_pixels = bgra_premultiplied
@@ -346,6 +361,7 @@ class LayeredSurface:
 
     def show(self) -> None:
         if self.hwnd and not self.window_shown:
+            self._ensure_topmost(move_window=False)
             self.user32.ShowWindow(self.hwnd, 4)  # SW_SHOWNOACTIVATE
             self.window_shown = True
 
