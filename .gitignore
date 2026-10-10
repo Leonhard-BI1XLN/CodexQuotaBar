@@ -1,0 +1,15 @@
+# Windows build output is attached to GitHub Releases, not stored in Git history.
+CodexQuotaBar.exe
+
+# Local runtime/user data
+app.log
+settings.json
+__pycache__/
+*.py[cod]
+
+# Python and PyInstaller build output
+.venv/
+venv/
+build/
+dist/
+*.spec
