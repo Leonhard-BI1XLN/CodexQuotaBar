@@ -2,7 +2,15 @@
 
 **Languages:** [简体中文](#简体中文) · [English](#english) · [日本語](#日本語) · [한국어](#한국어)
 
-Lightweight Windows overlay that displays your remaining Codex quota in two lines:
+> **适用对象：MyDockFinder 用户。本工具在 MyDockFinder 顶栏显示额度，不是独立的桌面悬浮组件。**
+>
+> **For MyDockFinder users: this displays quota on the MyDockFinder bar; it is not a standalone desktop floating widget.**
+>
+> **MyDockFinder ユーザー向けです。MyDockFinder のバーに残量を表示し、単独で浮かぶデスクトップウィジェットではありません。**
+>
+> **MyDockFinder 사용자를 위한 도구입니다. MyDockFinder 바에 잔여량을 표시하며, 독립적으로 떠 있는 데스크톱 위젯이 아닙니다.**
+
+A lightweight Windows companion utility for MyDockFinder users that displays your remaining Codex quota in two lines:
 
 ```text
 5h:  xx%
@@ -11,7 +19,7 @@ Week: xx%
 
 ## 简体中文
 
-在 Windows 上显示 Codex 5 小时和每周额度。标签为透明浮层，锚定在 MyDockFinder 顶栏上，并根据背景亮度切换文字颜色。
+专为 MyDockFinder 用户设计，在 MyDockFinder 顶栏显示 Codex 5 小时和每周额度；不是独立的桌面悬浮组件。文字会根据背景亮度切换颜色。
 
 ### 下载与使用
 
@@ -38,7 +46,7 @@ Week: xx%
 
 ## English
 
-A small Windows overlay showing your remaining Codex 5-hour and weekly quota. It has a transparent background, follows the MyDockFinder top bar, and adapts its text color to the background.
+A small Windows companion utility for MyDockFinder users. It displays your remaining Codex 5-hour and weekly quota on the MyDockFinder bar; it is not a standalone desktop floating widget. The text adapts to the background.
 
 ### Download and use
 
@@ -65,7 +73,7 @@ The script downloads PyInstaller and Pillow and builds a single-file `CodexQuota
 
 ## 日本語
 
-Windows 上で Codex の 5 時間および週間の残り使用量を表示する小さなオーバーレイです。背景は透明で、MyDockFinder の上部バーに追従し、背景に合わせて文字色を切り替えます。
+MyDockFinder ユーザー向けの小さな Windows 用ツールです。MyDockFinder のバーに Codex の 5 時間および週間の残り使用量を表示します。単独で浮かぶデスクトップウィジェットではありません。文字色は背景に合わせて切り替わります。
 
 ### ダウンロードと使い方
 
@@ -92,7 +100,7 @@ Python 3.13 をインストールし、PowerShell で次を実行してくださ
 
 ## 한국어
 
-Windows에서 Codex의 5시간 및 주간 잔여 사용량을 표시하는 작은 오버레이입니다. 배경은 투명하며 MyDockFinder 상단 바를 따라가고, 배경 밝기에 맞춰 글자 색을 전환합니다.
+MyDockFinder 사용자를 위한 작은 Windows 도구입니다. MyDockFinder 바에 Codex의 5시간 및 주간 잔여 사용량을 표시하며, 독립 데스크톱 플로팅 위젯이 아닙니다. 글자 색은 배경에 맞춰 바뀝니다.
 
 ### 다운로드 및 사용
 
