@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 APP_NAME = "CodexQuotaBar"
-APP_VERSION = "1.10.3"
+APP_VERSION = "1.10.4"
 BAR_CLASS = "MyFinderApp"
 POLL_SECONDS = 60
 WIDGET_WIDTH = 94
@@ -327,10 +327,6 @@ class LayeredSurface:
         self.screen_origin = new_screen_origin
         if position_changed:
             self._ensure_topmost(move_window=True)
-        elif self.window_shown:
-            # MyDockFinder can raise its bar over this overlay after a click.
-            # Reassert z-order without moving the window so it stays visible.
-            self._ensure_topmost(move_window=False)
         if self.last_pixels is not None:
             self._update_pixels(self.last_pixels)
 
@@ -755,6 +751,7 @@ class QuotaBar:
         self.pending_bar_count = 0
         self.missing_bar_count = 0
         self.wheel_delta_remainder = 0
+        self.topmost_restore_after_id = None
         self.is_closing = False
         self.last_success = "等待首次同步"
         self.last_error = ""
@@ -835,7 +832,17 @@ class QuotaBar:
         user32.IsWindow.argtypes = [ctypes.wintypes.HWND]
         user32.IsWindow.restype = ctypes.wintypes.BOOL
         def hook_proc(code, message, data_pointer):
-            if code >= 0 and message == 0x020A:  # WM_MOUSEWHEEL
+            if code >= 0 and message in (0x0202, 0x0205, 0x0208, 0x020C):
+                # Mouse button release: MyDockFinder may raise its own bar after
+                # processing a click, so restore this overlay once afterward.
+                try:
+                    data = ctypes.cast(
+                        data_pointer, ctypes.POINTER(_MouseLlHookData)
+                    ).contents
+                    self._queue_topmost_after_bar_click(data)
+                except Exception as exc:
+                    log_message(f"Could not queue overlay z-order restore: {exc!r}")
+            elif code >= 0 and message == 0x020A:  # WM_MOUSEWHEEL
                 try:
                     data = ctypes.cast(
                         data_pointer, ctypes.POINTER(_MouseLlHookData)
@@ -858,6 +865,29 @@ class QuotaBar:
             log_message(
                 f"Could not install mouse wheel hook: {ctypes.WinError(ctypes.get_last_error())!r}"
             )
+
+    def _queue_topmost_after_bar_click(self, data: _MouseLlHookData) -> None:
+        if self.is_closing or not self.is_visible or not self.layered.window_shown:
+            return
+        bar = self.confirmed_bar
+        if bar is None:
+            return
+        _parent_hwnd, left, top, width, height = bar
+        if left <= data.pt.x < left + width and top <= data.pt.y < top + height:
+            # The low-level hook runs outside Tk's UI thread. Queue all window
+            # operations for the normal UI loop.
+            self.messages.put(("restore_topmost", None))
+
+    def _restore_overlay_topmost(self) -> None:
+        self.topmost_restore_after_id = None
+        if self.is_closing or not self.is_visible or not self.layered.window_shown:
+            return
+        try:
+            # One deferred z-order update after a bar click. No movement,
+            # resizing, activation, or periodic z-order changes.
+            self.layered._ensure_topmost(move_window=False)
+        except Exception as exc:
+            log_message(f"Could not restore quota overlay after MyDockFinder click: {exc!r}")
 
     def _move_overlay_by_wheel(self, user32, data: _MouseLlHookData) -> bool:
         if not user32.GetAsyncKeyState(0x12) & 0x8000:  # VK_MENU (Alt)
@@ -1224,9 +1254,14 @@ class QuotaBar:
                         self._render_layered()
                 elif kind == "move_by_wheel":
                     self._move_overlay(value)
+                elif kind == "restore_topmost":
+                    if self.topmost_restore_after_id is None:
+                        self.topmost_restore_after_id = self.root.after(
+                            80, self._restore_overlay_topmost
+                        )
         except queue.Empty:
             pass
-        self.root.after(250, self._process_messages)
+        self.root.after(25, self._process_messages)
 
     def close(self) -> None:
         global _ACTIVE_BAR
