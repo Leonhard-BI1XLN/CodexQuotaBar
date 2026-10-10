@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import threading
 import time
+import traceback
 from pathlib import Path
 from tkinter import Menu, Tk
 
@@ -18,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 
 APP_NAME = "CodexQuotaBar"
-APP_VERSION = "1.10.0"
+APP_VERSION = "1.10.2"
 BAR_CLASS = "MyFinderApp"
 POLL_SECONDS = 60
 WIDGET_WIDTH = 94
@@ -26,6 +27,7 @@ WIDGET_HEIGHT = 30
 SURFACE_CLASS = "CodexQuotaBarNativeSurface"
 _ACTIVE_BAR = None
 _SURFACE_WNDPROC = None
+_INSTANCE_MUTEX = None
 
 
 class _WindowClassEx(ctypes.Structure):
@@ -410,6 +412,36 @@ def log_message(message: str) -> None:
         pass
 
 
+def acquire_single_instance() -> bool:
+    """Keep repeated launches from creating duplicate overlays and mouse hooks."""
+    global _INSTANCE_MUTEX
+    if os.name != "nt":
+        return True
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.wintypes.BOOL,
+        ctypes.wintypes.LPCWSTR,
+    ]
+    kernel32.CreateMutexW.restype = ctypes.wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+    kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+    ctypes.set_last_error(0)
+    handle = kernel32.CreateMutexW(None, False, "Local\\CodexQuotaBar.Singleton")
+    if not handle:
+        log_message(
+            f"Could not create single-instance mutex: {ctypes.WinError(ctypes.get_last_error())!r}"
+        )
+        return True
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        kernel32.CloseHandle(handle)
+        log_message("Ignored duplicate launch; another instance is already running.")
+        return False
+    _INSTANCE_MUTEX = handle
+    return True
+
+
 def load_settings() -> dict:
     defaults = {"position_ratio": 0.572, "locked": False, "opacity": 0.94}
     try:
@@ -677,6 +709,7 @@ class QuotaBar:
         _ACTIVE_BAR = self
         self.settings = load_settings()
         self.root = Tk()
+        self.root.report_callback_exception = self._report_callback_exception
         self.root.title("Codex Quota Bar")
         self.root.overrideredirect(True)
         self.root.geometry(f"{WIDGET_WIDTH}x{WIDGET_HEIGHT}+0+0")
@@ -705,6 +738,8 @@ class QuotaBar:
         self.pending_bar: tuple[int, int, int, int, int] | None = None
         self.pending_bar_count = 0
         self.missing_bar_count = 0
+        self.wheel_delta_remainder = 0
+        self.is_closing = False
         self.last_success = "等待首次同步"
         self.last_error = ""
         self.messages: queue.Queue = queue.Queue()
@@ -716,7 +751,7 @@ class QuotaBar:
         self.context = Menu(self.root, tearoff=False)
         self.context.add_command(label="状态：等待同步", state="disabled")
         self.context.add_command(
-            label="Ctrl + Shift + 滚轮：横向滚动 MyDockFinder 顶栏",
+            label="任意位置 Alt + 滚轮：左右移动额度标签",
             state="disabled",
         )
         self.context.add_separator()
@@ -744,9 +779,17 @@ class QuotaBar:
         self.root.after(50, self._poll_text_color)
         self.root.after(500, self._follow_bar)
         self._install_mouse_wheel_hook()
+        log_message(f"{APP_NAME} {APP_VERSION} started (pid={os.getpid()}).")
+
+    @staticmethod
+    def _report_callback_exception(exc_type, exc_value, exc_traceback) -> None:
+        details = "".join(
+            traceback.format_exception(exc_type, exc_value, exc_traceback)
+        )
+        log_message(f"Unhandled Tk callback exception:\n{details}")
 
     def _install_mouse_wheel_hook(self) -> None:
-        """Translate Ctrl+Shift+wheel into horizontal scrolling over MyDockFinder."""
+        """Use Alt+wheel anywhere to move this quota label along the MyDockFinder bar."""
         if os.name != "nt":
             return
 
@@ -775,24 +818,16 @@ class QuotaBar:
         user32.GetAsyncKeyState.restype = ctypes.c_short
         user32.IsWindow.argtypes = [ctypes.wintypes.HWND]
         user32.IsWindow.restype = ctypes.wintypes.BOOL
-        user32.PostMessageW.argtypes = [
-            ctypes.wintypes.HWND,
-            ctypes.wintypes.UINT,
-            ctypes.wintypes.WPARAM,
-            ctypes.wintypes.LPARAM,
-        ]
-        user32.PostMessageW.restype = ctypes.wintypes.BOOL
-
         def hook_proc(code, message, data_pointer):
             if code >= 0 and message == 0x020A:  # WM_MOUSEWHEEL
                 try:
                     data = ctypes.cast(
                         data_pointer, ctypes.POINTER(_MouseLlHookData)
                     ).contents
-                    if self._forward_horizontal_wheel(user32, data):
+                    if self._move_overlay_by_wheel(user32, data):
                         return 1  # Consume the vertical wheel event.
                 except Exception as exc:
-                    log_message(f"Horizontal wheel translation failed: {exc!r}")
+                    log_message(f"Alt+wheel overlay movement failed: {exc!r}")
             return user32.CallNextHookEx(
                 self.mouse_hook, code, message, data_pointer
             )
@@ -808,32 +843,49 @@ class QuotaBar:
                 f"Could not install mouse wheel hook: {ctypes.WinError(ctypes.get_last_error())!r}"
             )
 
-    def _forward_horizontal_wheel(self, user32, data: _MouseLlHookData) -> bool:
-        if not user32.GetAsyncKeyState(0x11) & 0x8000:  # VK_CONTROL
-            return False
-        if not user32.GetAsyncKeyState(0x10) & 0x8000:  # VK_SHIFT
+    def _move_overlay_by_wheel(self, user32, data: _MouseLlHookData) -> bool:
+        if not user32.GetAsyncKeyState(0x12) & 0x8000:  # VK_MENU (Alt)
             return False
 
+        if self.settings["locked"]:
+            return False
         bar = self.confirmed_bar
         if bar is None:
             return False
-        parent_hwnd, left, top, width, height = bar
-        x, y = data.pt.x, data.pt.y
-        if not (left <= x < left + width and top <= y < top + height):
-            return False
+        parent_hwnd, _left, _top, _width, _height = bar
         if not user32.IsWindow(parent_hwnd):
             return False
 
         delta = ctypes.c_short((data.mouseData >> 16) & 0xFFFF).value
         if not delta:
             return False
-        horizontal_wheel = 0x020E  # WM_MOUSEHWHEEL
-        key_state = 0x0004 | 0x0008  # MK_SHIFT | MK_CONTROL
-        wparam = ((delta & 0xFFFF) << 16) | key_state
-        lparam = ctypes.c_ssize_t(((y & 0xFFFF) << 16) | (x & 0xFFFF)).value
-        return bool(
-            user32.PostMessageW(parent_hwnd, horizontal_wheel, wparam, lparam)
-        )
+        # The hook runs outside Tk's UI thread. Queue the wheel delta so the
+        # quota overlay itself can be repositioned safely on the UI thread.
+        self.messages.put(("move_by_wheel", delta))
+        return True
+
+    def _move_overlay(self, delta: int) -> None:
+        if self.settings["locked"] or self.confirmed_bar is None or self.bar_rect is None:
+            return
+
+        accumulated = self.wheel_delta_remainder + delta
+        notches = int(accumulated / 120)
+        self.wheel_delta_remainder = accumulated - notches * 120
+        if not notches:
+            return
+
+        parent_hwnd, left, top, width, _height = self.confirmed_bar
+        max_x = max(0, width - WIDGET_WIDTH)
+        x = max(0, min(max_x, self.layered.local_position[0] + notches * 24))
+        y = self.layered.local_position[1]
+        try:
+            self.layered.attach_to_finder(parent_hwnd, x, y, left, top)
+        except Exception as exc:
+            log_message(f"Could not move quota overlay with Alt+wheel: {exc!r}")
+            return
+
+        self.settings["position_ratio"] = x / max(1, max_x)
+        save_settings(self.settings)
 
     def _update_text_color(self) -> bool:
         """Choose readable text from the MyDockFinder pixels behind this transparent window."""
@@ -962,10 +1014,13 @@ class QuotaBar:
             self.missing_bar_count += 1
             self.pending_bar = None
             self.pending_bar_count = 0
-            if self.missing_bar_count >= 3:
+            if self.missing_bar_count >= 10:
                 self.confirmed_bar = None
                 self.bar_rect = None
                 if self.is_visible:
+                    log_message(
+                        "Hiding quota overlay after MyDockFinder was not detected for 10 checks."
+                    )
                     self.layered.hide()
                     self.is_visible = False
             self.root.after(500, self._follow_bar)
@@ -1151,12 +1206,18 @@ class QuotaBar:
                         self.five_value = "5h: --%"
                         self.week_value = "Week: --%"
                         self._render_layered()
+                elif kind == "move_by_wheel":
+                    self._move_overlay(value)
         except queue.Empty:
             pass
         self.root.after(250, self._process_messages)
 
     def close(self) -> None:
         global _ACTIVE_BAR
+        if self.is_closing:
+            return
+        self.is_closing = True
+        log_message(f"{APP_NAME} {APP_VERSION} closing.")
         self.stop_event.set()
         if self.mouse_hook:
             user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -1175,9 +1236,12 @@ class QuotaBar:
 
 
 def main() -> None:
+    if not acquire_single_instance():
+        return
     try:
         QuotaBar().run()
     except Exception as exc:
+        log_message(f"Fatal application error:\n{traceback.format_exc()}")
         try:
             import tkinter.messagebox as messagebox
 
